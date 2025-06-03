@@ -1,4 +1,5 @@
 import { ClusterStat, ProcessingOptions } from './types';
+import { DBSCAN3D } from './dbscan';
 
 export class ImageSegmentation {
   async preprocessImage(file: File, options: ProcessingOptions): Promise<ImageData> {
@@ -394,10 +395,107 @@ export class ImageSegmentation {
     segmentedImageData: ImageData;
     clusterImages: ImageData[];
   }> {
-    // DBSCAN implementation placeholder
-    // For brevity, this method is not fully implemented here.
-    // You can implement DBSCAN clustering or use a library.
-    throw new Error('DBSCAN segmentation not implemented.');
+    const { data, width, height } = imageData;
+    const pixels: number[][] = [];
+    
+    // Extract pixels with spatial coordinates
+    for (let i = 0; i < data.length; i += 4) {
+        const pixelIndex = i / 4;
+        const x = pixelIndex % width;
+        const y = Math.floor(pixelIndex / width);
+        
+        pixels.push([
+            data[i],     // R
+            data[i + 1], // G
+            data[i + 2], // B
+            x * 0.1,     // Spatial X (weighted)
+            y * 0.1      // Spatial Y (weighted)
+        ]);
+    }
+
+    const dbscan = new DBSCAN3D(30, 4);
+    const labels = dbscan.fit(pixels);
+
+    // Calculate cluster centers
+    const centers: number[][] = [];
+    const uniqueLabels = [...new Set(labels)].filter(label => label > 0);
+    
+    for (const label of uniqueLabels) {
+        const clusterPoints = pixels.filter((_, i) => labels[i] === label);
+        const center = clusterPoints.reduce((acc, point) => {
+            return acc.map((val, i) => val + point[i]);
+        }, new Array(5).fill(0)).map(val => val / clusterPoints.length);
+        centers.push(center.slice(0, 3)); // Only RGB values
+    }
+
+    // Create vibrant color palette for visualization
+    const vibrantColors = [
+      [255, 0, 0],     // Red
+      [0, 255, 0],     // Green
+      [0, 0, 255],     // Blue
+      [255, 255, 0],   // Yellow
+      [255, 0, 255],   // Magenta
+      [0, 255, 255],   // Cyan
+      [255, 128, 0],   // Orange
+      [128, 0, 255],   // Purple
+      [255, 128, 128], // Pink
+      [128, 255, 128]  // Light Green
+    ];
+
+    // Create segmented image with vibrant colors
+    const segmentedData = new Uint8ClampedArray(data.length);
+    const clusterStats: ClusterStat[] = [];
+    const clusterImages: ImageData[] = [];
+
+    // Calculate cluster statistics
+    for (let i = 0; i < uniqueLabels.length; i++) {
+      const label = uniqueLabels[i];
+      const clusterPixelIndices = labels.map((l, idx) => l === label ? idx : -1).filter(idx => idx !== -1);
+      
+      if (clusterPixelIndices.length > 0) {
+        const dominantColor = vibrantColors[i % vibrantColors.length];
+        
+        clusterStats.push({
+          clusterId: label,
+          pixelCount: clusterPixelIndices.length,
+          percentage: (clusterPixelIndices.length / pixels.length) * 100,
+          dominantColor: dominantColor
+        });
+
+        // Create individual cluster image
+        const clusterImageData = new Uint8ClampedArray(data.length);
+        clusterImageData.fill(0); // Black background
+        
+        for (const pixelIdx of clusterPixelIndices) {
+          const dataIdx = pixelIdx * 4;
+          clusterImageData[dataIdx] = dominantColor[0];     // R
+          clusterImageData[dataIdx + 1] = dominantColor[1]; // G
+          clusterImageData[dataIdx + 2] = dominantColor[2]; // B
+          clusterImageData[dataIdx + 3] = 255;              // A
+        }
+        
+        clusterImages.push(new ImageData(clusterImageData, width, height));
+      }
+    }
+
+    // Fill segmented image with vibrant colors
+    for (let i = 0; i < labels.length; i++) {
+      const dataIdx = i * 4;
+      const clusterColor = vibrantColors[labels[i] % vibrantColors.length];
+      
+      segmentedData[dataIdx] = clusterColor[0];     // R
+      segmentedData[dataIdx + 1] = clusterColor[1]; // G
+      segmentedData[dataIdx + 2] = clusterColor[2]; // B
+      segmentedData[dataIdx + 3] = 255;             // A
+    }
+
+    return {
+      labels,
+      centers: centers.map(center => center.slice(0, 3)),
+      clusterStats: clusterStats.sort((a, b) => b.percentage - a.percentage),
+      segmentedImageData: new ImageData(segmentedData, width, height),
+      clusterImages
+    };
   }
 
   private async meanShiftSegmentation(imageData: ImageData): Promise<{
