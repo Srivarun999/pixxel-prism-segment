@@ -554,8 +554,3 @@ export class ImageSegmentation {
     });
   }
 }
-
-git remote set-url origin https://github.com/Srivarun999/pixxel-prism-segment.git
-git add .
-git commit -m "Updated image segmentation algorithms"
-git push -u origin main
